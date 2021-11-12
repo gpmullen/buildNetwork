@@ -109,11 +109,12 @@ public class buildNetwork {
             nex.setStackTrace(ex.getStackTrace());
             throw nex;
         }
-        return Stream.of(new OutputRow(pName,pId,cName,cId));
+
+        return Stream.of();
     }
 
     public Stream<OutputRow> endPartition() {
-
+        List<OutputRow> ret = new ArrayList<OutputRow>();
         //Need this because the YifanHu alone is broken without providing a starting point
         //So we generate some random x/y values with the Random Layout
         RandomLayout randLayout = new RandomLayout(null,5d);
@@ -129,13 +130,10 @@ public class buildNetwork {
         layout.setOptimalDistance(200f);
         layout.setBarnesHutTheta(1.0f);
 
-
-        List<OutputRow> ret = new ArrayList<OutputRow>();
         // 5 passes seems to give good separation
        for(int i=0; i < 5 && layout.canAlgo(); i++){
             layout.goAlgo();
         }
-
 
         for(Edge e: graphModel.getGraph().getEdges())
         {
