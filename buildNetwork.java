@@ -2,36 +2,36 @@ package NetworkBuilder;
 
 import org.gephi.appearance.api.AppearanceController;
 import org.gephi.appearance.api.AppearanceModel;
-import org.gephi.appearance.api.Function;
-import org.gephi.appearance.plugin.RankingElementColorTransformer;
-import org.gephi.appearance.plugin.RankingLabelSizeTransformer;
-import org.gephi.appearance.plugin.RankingNodeSizeTransformer;
 import org.gephi.graph.api.*;
 import org.gephi.io.exporter.api.ExportController;
+import org.gephi.io.generator.plugin.RandomGraph;
+import org.gephi.io.importer.api.Container;
 import org.gephi.io.importer.api.ImportController;
+import org.gephi.io.processor.plugin.DefaultProcessor;
+import org.gephi.layout.plugin.AutoLayout;
 import org.gephi.layout.plugin.force.StepDisplacement;
 import org.gephi.layout.plugin.force.yifanHu.YifanHuLayout;
+import org.gephi.layout.plugin.forceAtlas.ForceAtlasLayout;
 import org.gephi.layout.plugin.random.RandomLayout;
 import org.gephi.preview.api.PreviewController;
 import org.gephi.preview.api.PreviewModel;
 import org.gephi.preview.api.PreviewProperty;
 import org.gephi.project.api.ProjectController;
 import org.gephi.project.api.Workspace;
-import org.gephi.statistics.plugin.GraphDistance;
 import org.openide.util.Lookup;
 
-import java.awt.*;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 
 public class buildNetwork {
     private GraphModel graphModel;
 
-    private DirectedGraph DirectedGraph;
+    private DirectedGraph directedGraph;
     private AppearanceController appearanceController;
     private AppearanceModel appearanceModel;
     private ImportController importController;
@@ -48,7 +48,6 @@ public class buildNetwork {
             test.process("Dept", "0010A0", "Finance Inc", "001J7AAK");
             test.process("Dept", "0010A0", "Healthcare Services", "0013AAE");
             test.process("Dept", "0010A0", "Healthcare Services", "0013AAE");
-            test.formatting();
             Stream output = test.endPartition();
 
             output.forEach(s -> System.out.println(s));
@@ -70,7 +69,7 @@ public class buildNetwork {
         graphModel = Lookup.getDefault().lookup(GraphController.class).getGraphModel();
         appearanceController = Lookup.getDefault().lookup(AppearanceController.class);
         appearanceModel = appearanceController.getModel();
-        DirectedGraph = graphModel.getDirectedGraph();
+        directedGraph = graphModel.getDirectedGraph();
         layout = new YifanHuLayout(null,new StepDisplacement(1f));
         layout.initAlgo();
 
@@ -83,24 +82,32 @@ public class buildNetwork {
         try {
             if (pId != null && cId != null && pName != null && cId != null) {
                 //Create two nodes
-                Node n0 = DirectedGraph.getNode(pId);
+                Node n0 = directedGraph.getNode(pId);
                 if (n0 == null) {
                     n0 = graphModel.factory().newNode(pId);
                     n0.setLabel(pName);
-                    DirectedGraph.addNode(n0);
+                    //VERY IMPORTANT: initialize with random position. Otherwise, if all nodes get x=0,y=0 coordinates, layouts won't work (known bug) https://github.com/gephi/gephi/issues/1698
+                    float x = (float) (((0.01 + Math.random()) * 1000) - 500);
+                    float y = (float) (((0.01 + Math.random()) * 1000) - 500);
+                    n0.setPosition(x, y);
+                    System.out.println(n0.x()+","+n0.y());
+                    directedGraph.addNode(n0);
                 }
 
-                Node n1 = DirectedGraph.getNode(cId);
+                Node n1 = directedGraph.getNode(cId);
                 if (n1 == null) {
                     n1 = graphModel.factory().newNode(cId);
                     n1.setLabel(cName);
-                    DirectedGraph.addNode(n1);
+                    float x = (float) (((0.01 + Math.random()) * 1000) - 500);
+                    float y = (float) (((0.01 + Math.random()) * 1000) - 500);
+                    n1.setPosition(x, y);
+                    directedGraph.addNode(n1);
                 }
-                //Create an edge - directed and weight 1
-                Edge e1 = graphModel.factory().newEdge(n0, n1, 1, true);
+                //Create an edge - undirected and weight 1
+                Edge e1 = graphModel.factory().newEdge(n0, n1, 0, true);
 
                 //Append as a Directed Graph
-                DirectedGraph.addEdge(e1);
+                directedGraph.addEdge(e1);
             }
         }
         catch (Exception ex)
@@ -115,13 +122,6 @@ public class buildNetwork {
 
     public Stream<OutputRow> endPartition() {
         List<OutputRow> ret = new ArrayList<OutputRow>();
-        //Need this because the YifanHu alone is broken without providing a starting point
-        //So we generate some random x/y values with the Random Layout
-        RandomLayout randLayout = new RandomLayout(null,5d);
-        randLayout.setGraphModel(graphModel);
-        randLayout.initAlgo();
-        randLayout.goAlgo();
-        randLayout.endAlgo();
 
         //set YifanHu defaults
         layout.setGraphModel(graphModel);
@@ -130,10 +130,13 @@ public class buildNetwork {
         layout.setOptimalDistance(200f);
         layout.setBarnesHutTheta(1.0f);
 
-        // 5 passes seems to give good separation
-       for(int i=0; i < 5 && layout.canAlgo(); i++){
-            layout.goAlgo();
-        }
+        AutoLayout autoLayout = new AutoLayout(1, TimeUnit.SECONDS);
+        autoLayout.setGraphModel(graphModel);
+        YifanHuLayout firstLayout = new YifanHuLayout(null, new StepDisplacement(1f));
+        AutoLayout.DynamicProperty adjustBySizeProperty = AutoLayout.createDynamicProperty("forceAtlas.adjustSizes.name", Boolean.TRUE, 0.1f);//True after 10% of layout time
+        AutoLayout.DynamicProperty repulsionProperty = AutoLayout.createDynamicProperty("forceAtlas.repulsionStrength.name", 500., 0f);//500 for the complete period
+        autoLayout.addLayout(firstLayout, 1f);
+        autoLayout.execute();
 
         for(Edge e: graphModel.getGraph().getEdges())
         {
@@ -146,57 +149,6 @@ public class buildNetwork {
             ret.add(o);
         }
 
-        layout.endAlgo();
         return ret.stream();
-    }
-
-    private void formatting()
-    {
-
-
-        //Rank color by Degree
-
-        Function degreeRanking = appearanceModel.getNodeFunction(DirectedGraph, AppearanceModel.GraphFunction.NODE_DEGREE, RankingElementColorTransformer.class);
-        RankingElementColorTransformer degreeTransformer = (RankingElementColorTransformer) degreeRanking.getTransformer();
-        degreeTransformer.setColors(new Color[]{new Color(0xFEF0D9), new Color(0xB30000)});
-        degreeTransformer.setColorPositions(new float[]{0f, 1f});
-        appearanceController.transform(degreeRanking);
-
-        //Get Centrality
-
-        GraphDistance distance = new GraphDistance();
-        distance.setDirected(false);
-        distance.execute(graphModel);
-
-        //Rank size by centrality
-
-        Column centralityColumn = graphModel.getNodeTable().getColumn(GraphDistance.BETWEENNESS);
-        Function centralityRanking = appearanceModel.getNodeFunction(DirectedGraph, centralityColumn, RankingNodeSizeTransformer.class);
-        RankingNodeSizeTransformer centralityTransformer = (RankingNodeSizeTransformer) centralityRanking.getTransformer();
-        centralityTransformer.setMinSize(1);
-        centralityTransformer.setMaxSize(30);
-        appearanceController.transform(centralityRanking);
-
-        //Rank label size - set a multiplier size
-
-        Function centralityRanking2 = appearanceModel.getNodeFunction(DirectedGraph, centralityColumn, RankingLabelSizeTransformer.class);
-        RankingLabelSizeTransformer labelSizeTransformer = (RankingLabelSizeTransformer) centralityRanking2.getTransformer();
-        labelSizeTransformer.setMinSize(1);
-        labelSizeTransformer.setMaxSize(50);
-        appearanceController.transform(centralityRanking2);
-
-        //Set 'show labels' option in Preview - and disable node size influence on text size
-        PreviewModel previewModel = Lookup.getDefault().lookup(PreviewController.class).getModel();
-        previewModel.getProperties().putValue(PreviewProperty.SHOW_NODE_LABELS, Boolean.TRUE);
-        previewModel.getProperties().putValue(PreviewProperty.NODE_LABEL_PROPORTIONAL_SIZE, Boolean.FALSE);
-
-        //Export
-        ExportController ec = Lookup.getDefault().lookup(ExportController.class);
-        try {
-            ec.exportFile(new File("/Users/gmullen/Downloads/ranking.pdf"));
-        } catch (IOException ex) {
-            ex.printStackTrace();
-
-        }
     }
 }
